@@ -1,9 +1,3 @@
----
-title: "Final"
-author: "Ethan Michaels"
-date: "February 28, 2024"
-output: pdf_document
----
 
 #Installing Packages
 ```{r}
