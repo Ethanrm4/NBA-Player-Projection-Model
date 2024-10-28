@@ -1,0 +1,265 @@
+---
+title: "Final"
+author: "Ethan Michaels"
+date: "February 28, 2024"
+output: pdf_document
+---
+
+#Installing Packages
+```{r}
+library(hoopR)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+library(caret)
+library(Metrics)
+library(pls)
+library(car)
+library("readxl")
+library("writexl")
+```
+
+```{r}
+#hoopr <- load_nba_player_box()
+```
+
+#Loading in the Data for 2020 to 2023 Season and making appropriate modifications
+```{r}
+nba2021<-read.csv("nba2021.csv")
+nba2022<-read.csv("nba2022.csv")
+nba2023<-read.csv("nba2023.csv")
+
+```
+
+```{r}
+nbaFA<-read_csv("NBAfa.csv")
+```
+
+```{r}
+nba2021 <- nba2021[!duplicated(nba2021$Player), ]
+nba2022 <- nba2022[!duplicated(nba2022$Player), ]
+nba2023 <- nba2023[!duplicated(nba2023$Player), ]
+```
+
+```{r}
+nbadata <- rbind(nba2021,nba2022)
+nbadata <- rbind(nbadata,nba2023)
+```
+
+#Creating a new column to get the total number of minutes played in each season so I can include only players with over 1000 minutes played
+```{r}
+nbadata$totalMinutes <- nbadata$MP*nbadata$G
+```
+
+```{r}
+nbadata <- na.omit(nbadata)
+nbadata1000 <- filter(nbadata, totalMinutes>999)
+```
+
+#Creating a dataframe to take in the variables I want to look at
+```{r}
+nbaWS <- nbadata1000 %>% select(G,MP,PTS,AST,ORB,DRB,TOV,TRB,FG.,X3P.,FT.,DWS,OWS,WS,PER, TS., VORP,STL,BLK)
+```
+
+#Correlation between win shares and the different features
+```{r}
+cor(nbaWS)
+```
+#Looking at the correlation plot above and specifictly row "WS" it can be seen that Player Efficiency Rating and Value over Replacement Player are highly correlated to WS while 3-Point Percentage is the only varaible with a negative relationship with WS and Free Throw Perecentage almost nearing the negative realtionship. This seems odd to me as you'd think in the NBA 3-Throw percentage would be valuable in terms of win share.
+
+#Field Goal Percentage , 3-point Percentage, Free Throw Percentage, and True shooting Percentage all depict shooting stats and True Shooting Percentage depicts all stats together, because of this I will only be keeping the True Shooting percentage in the analysis from here on out
+
+#Creating a Train and Test/validation
+```{r}
+set.seed(12345)
+sample <-createDataPartition(nbaWS$WS,p=0.7,list=FALSE)
+traindata <- nbaWS[sample, ]
+testdata <-nbaWS[-sample, ]
+dim(traindata)
+dim(testdata)
+```
+
+#Tuning the train model, using 100 rows in each CV, doing it 5 times
+```{r}
+control <- trainControl(method="repeatedcv", number=50, repeats=3,savePredictions=TRUE)
+```
+
+#Running a regression model with all independent variables using the Train Data 
+```{r}
+linearTrain <-lm(WS~MP+PTS+AST+DRB+ORB+STL+BLK+VORP+TS.,data=traindata,trControl=control)
+
+summary(linearTrain)
+```
+#From the linear model above all varaibles are statistically significant with an R^2 value of .8806.
+#Some meanings of the values are for every 1% increase in Treu Shooting Percentage increases WS by 11.56
+# For every 1 point increase in Points Per Game we can expect a decrease of .08 in Win share
+
+
+```{r}
+testdata$Linear_Regression<- predict(linearTrain,newdata=testdata)
+
+vif(linearTrain)
+```
+
+#Testing Accuracy of my model
+
+```{r}
+MSE <- mean((testdata$Linear_Regression-testdata$WS)^2)
+linear_RMSE <- (MSE)^2
+```
+
+#Random Forest
+```{r}
+set.seed(12345)
+rf_model <- train(WS~MP+PTS+AST+DRB+ORB+STL+BLK+VORP+TS.,method="rf",data=traindata,trControl=control)
+summary(rf_model)
+```
+
+```{r}
+rf_pred <- predict(rf_model, testdata)
+```
+
+```{r}
+rf_RMSE <- sqrt(mean((rf_pred-testdata$WS)^2))
+```
+
+#Partial Least Squares Method
+```{r}
+set.seed(12345)
+pls_model <- train(WS~MP+PTS+AST+DRB+ORB+STL+BLK+VORP+TS.,method="pls",data=traindata,trControl=control,scale=TRUE,validation="CV")
+summary(pls_model)
+```
+#Using the Validation table we can see that adding additional PLS components actually leads to an increase in test RMSE. Thus it appears that it would be optimal to use 7 PLS components in the final model
+
+#Making predictions on the model
+
+```{r}
+pls_prediction <- predict(pls_model,testdata,ncomp=3)
+```
+
+```{r}
+pls_RMSE <- sqrt(mean((pls_prediction-testdata$WS)^2))
+```
+
+#Principal Components REgression
+```{r}
+pcr_model <-train(WS~MP+PTS+AST+DRB+ORB+STL+BLK+VORP+TS.,method="pcr",data=traindata,scale=TRUE,validation="CV")
+```
+
+#Choose the Number of Principal Components
+```{r}
+summary(pcr_model)
+```
+#Using the Validation table we can see that addition additional principal comppoennts leads to an increase in test RSME. Thus, it would be optimal to use 5 comps
+
+#Creating predictions
+
+
+```{r}
+pcr_prediction <- predict(pcr_model,testdata,ncomps=11)
+```
+
+```{r}
+pcr_RMSE <- sqrt(mean((pcr_prediction-testdata$WS)^2))
+```
+
+
+#RMSE value of all models
+```{r}
+sprintf("Linear RMSE: %.3f",linear_RMSE)
+sprintf("RandomForest RMSE: %.3f",rf_RMSE)
+sprintf("PLS RMSE: %.3f",pls_RMSE)
+sprintf("PCR RMSE: %.3f",pcr_RMSE)
+
+```
+
+#After running all models I can compare the RMSE value which is one way to assess how well a regression model fits a dataset and tell us the average distance between the predicted values and the actual values of the dataset. The value that is closer to 0 means it is a better model that fits the dataset.
+
+#This being said the Linear regression would be the best model to use to predict next seasons Win Share Value
+
+# ############################################ Assigning Each Player a "Dollar Value" Based on WS  ######################################
+#3.44 Million per win according to Partnow in "Exactly how much does a win cost"
+
+```{r}
+wsValue <- nba2023 %>% select(Player,Pos,Tm,G,MP,PTS,AST,ORB,DRB,STL,BLK,VORP,TS.)
+```
+
+```{r}
+wsValue$WS <- predict(linearTrain, newdata=wsValue)
+```
+
+```{r}
+wsValue$Value <- wsValue$WS * 3.44
+```
+
+```{r}
+nbaFA2 <- nbaFA %>% select(PLAYER,EXP,POS.,Market.Value)
+nbaFA2 <- nbaFA2 %>% rename(Player=PLAYER)
+```
+
+```{r}
+wsValueReduced <- wsValue %>% full_join(nbaFA2)
+```
+
+```{r}
+wsValueReduced <- na.omit(wsValueReduced)
+wsValueReduced<-wsValueReduced[!(wsValueReduced$Market.Value==""),]
+```
+
+# ############################################ Off Season Moves by Utah Jazz  ######################################
+
+```{r}
+wsValue <- na.omit(wsValue)
+utahJazz <- wsValue[wsValue$Tm=="UTA"| wsValue$Player=="Damian Jones",]
+
+```
+
+```{r}
+
+```
+
+# ############################################ Free Agents signing ######################################
+
+```{r}
+nba2023FA <- nba2023 %>% full_join(nbaFA2)
+nba2023FA <- subset(nba2023FA,select=-c(EXP,POS.))
+nba2023FA <- na.omit(nba2023FA)
+nba2023FA<-nba2023FA[!(nba2023FA$Market.Value==""),]
+
+```
+
+```{r}
+nba2023FA$PredictWS <- predict(linearTrain, newdata=nba2023FA)
+```
+
+```{r}
+nba2023FA$Value <- nba2023FA$PredictWS*3.44
+```
+
+```{r}
+SGnba2023FA<-nba2023FA[(nba2023FA$Pos=="SG"),]
+
+```
+
+```{r}
+SGnba2023FA<-SGnba2023FA %>% select (Player, Pos, Market.Value,WS,Value, MP,PTS,AST,ORB,DRB,STL,BLK)
+
+SGnba2023FA$Market.Value <- as.numeric(SGnba2023FA$Market.Value)
+SGnba2023FA$Market.Value <-SGnba2023FA$Market.Value/1000000
+#SGnba2023FA$Value <- format(round(SGnba2023FA$Value,2),nsmall=2)
+```
+
+```{r}
+SGnba2023FA<-nba2023FA[(nba2023FA$Pos=="SG"),]
+
+```
+
+```{r}
+Othernba2023FA<-nba2023FA %>% select (Player, Pos, Market.Value,WS,Value, MP,PTS,AST,ORB,DRB,STL,BLK)
+
+Othernba2023FA$Market.Value <- as.numeric(Othernba2023FA$Market.Value)
+Othernba2023FA$Market.Value <-Othernba2023FA$Market.Value/1000000
+Othernba2023FA$Value <- format(round(Othernba2023FA$Value,2),nsmall=2)
+Othernba2023FA <- filter(Othernba2023FA,Othernba2023FA$Market.Value<22.5)
+```
